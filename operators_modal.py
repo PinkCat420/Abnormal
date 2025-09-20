@@ -208,7 +208,7 @@ class ABN_OT_normal_editor_modal(Operator):
         ob_bm, ob_kd, ob_bvh = ob_data_structures(
             self, context.active_object)
 
-        # INITIALIZE OBJECT DATA LISTS
+       # INITIALIZE OBJECT DATA LISTS
         self._object = context.active_object
         self._object_name = context.active_object.name
         self._object_pointer = context.active_object.as_pointer()
@@ -218,9 +218,17 @@ class ABN_OT_normal_editor_modal(Operator):
         self._object_kd = ob_kd
 
         if bpy.app.version[0] <= 4 and bpy.app.version[1] < 1:
-            if self._object.data.use_auto_smooth == False:
+            # OLD VERSIONS USE USE_AUTO_SMOOTH, "use_auto_smooth" BUT WE WILL USE INSTEAD.
+            if not self._object.data.use_auto_smooth:
                 self._object.data.use_auto_smooth = True
                 self._object.data.auto_smooth_angle = 180
+        else:
+            import math
+            mod = self._object.modifiers.get("EdgeSplit")
+            if not mod:
+                mod = self._object.modifiers.new(name="EdgeSplit", type='EDGE_SPLIT')
+                mod.split_angle = math.radians(180)
+                mod.use_edge_angle = True
 
         if bpy.app.version[0] >= 4:
             shader_2d_str = 'UNIFORM_COLOR'
