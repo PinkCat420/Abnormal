@@ -60,6 +60,118 @@ $OutputExtension = ".mp4"
 # --- 2. INITIALIZATION ---
 
 Write-Host "🚀 Starting H.265 Re-encoding Project..."
+
+# --- 2.5: PRE-FLIGHT CHECKS ---
+Write-Host "🕵️  Running Pre-flight Checks..."
+$CriticalErrors = @()
+$Warnings = @()
+
+# Critical Check 1: FFmpeg exists
+if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
+    $CriticalErrors += "CRITICAL: ffmpeg.exe not found in your system's PATH. This is required for video encoding."
+}
+
+# Critical Check 2: FFprobe exists
+if (-not (Get-Command ffprobe -ErrorAction SilentlyContinue)) {
+    $CriticalErrors += "CRITICAL: ffprobe.exe not found in your system's PATH. This is required for video analysis."
+}
+
+# Critical Check 3: SourcePath exists
+if (-not (Test-Path -Path $SourcePath -PathType Container)) {
+    $CriticalErrors += "CRITICAL: The Source Path '$SourcePath' does not exist or is not a directory."
+}
+
+if ($CriticalErrors.Count -gt 0) {
+    Write-Host "`n"
+    $CriticalErrors | ForEach-Object { Write-Error $_ }
+    Write-Host "`n"
+    Write-Error "Script cannot continue due to critical errors. Please resolve the issues above and try again."
+    exit 1
+}
+
+# Non-Critical Check 1: BackupPath exists
+if (-not (Test-Path -Path $BackupPath -PathType Container)) {
+    $Warnings += @{
+        Message = "WARNING: The Backup Path '$BackupPath' does not exist. The script will create it, but this may not be what you intended."
+        Fix = "Ensure the specified backup directory is correct. If it is, the script will create it automatically."
+    }
+}
+
+# Non-Critical Check 2: Write permissions for SourcePath
+try {
+    $TestFile = Join-Path -Path $SourcePath -ChildPath "temp_permission_test.tmp"
+    New-Item -ItemType File -Path $TestFile -ErrorAction Stop | Out-Null
+    Remove-Item -Path $TestFile -ErrorAction Stop
+} catch {
+    $Warnings += @{
+        Message = "WARNING: No write permissions in the Source Path '$SourcePath'. The script cannot create temporary files or move originals."
+        Fix = "Ensure you have write permissions for the directory '$SourcePath'."
+    }
+}
+
+# Non-Critical Check 3: Write permissions for BackupPath
+if (Test-Path -Path $BackupPath -PathType Container) {
+    try {
+        $TestFile = Join-Path -Path $BackupPath -ChildPath "temp_permission_test.tmp"
+        New-Item -ItemType File -Path $TestFile -ErrorAction Stop | Out-Null
+        Remove-Item -Path $TestFile -ErrorAction Stop
+    } catch {
+        $Warnings += @{
+            Message = "WARNING: No write permissions in the Backup Path '$BackupPath'. The script cannot move larger files or failed encodes."
+            Fix = "Ensure you have write permissions for the directory '$BackupPath'."
+        }
+    }
+}
+
+
+# Non-Critical Check 4: Disk Space
+$LargestFile = Get-ChildItem -Path $SourcePath -Recurse -File |
+    Where-Object { $_.Extension -in $VideoExtensions } |
+    Sort-Object -Property Length -Descending |
+    Select-Object -First 1
+
+if ($LargestFile) {
+    $LargestFileSizeGB = [Math]::Round($LargestFile.Length / 1GB, 2)
+    $SourceDrive = [System.IO.Path]::GetPathRoot($SourcePath)
+    $BackupDrive = [System.IO.Path]::GetPathRoot($BackupPath)
+
+    $SourceFreeSpace = (Get-PSDrive -Name ($SourceDrive.TrimEnd('\:'))).Free
+    $BackupFreeSpace = (Get-PSDrive -Name ($BackupDrive.TrimEnd('\:'))).Free
+
+    if ($SourceFreeSpace -lt $LargestFile.Length) {
+        $SourceFreeSpaceGB = [Math]::Round($SourceFreeSpace / 1GB, 2)
+        $Warnings += @{
+            Message = "WARNING: Low disk space on source drive ($SourceDrive). Available: $($SourceFreeSpaceGB) GB. Largest file: $($LargestFileSizeGB) GB."
+            Fix = "Free up at least $($LargestFileSizeGB - $SourceFreeSpaceGB) GB on $SourceDrive."
+        }
+    }
+
+    if ($BackupFreeSpace -lt $LargestFile.Length) {
+        $BackupFreeSpaceGB = [Math]::Round($BackupFreeSpace / 1GB, 2)
+        $Warnings += @{
+            Message = "WARNING: Low disk space on backup drive ($BackupDrive). Available: $($BackupFreeSpaceGB) GB. Largest file: $($LargestFileSizeGB) GB."
+            Fix = "Free up at least $($LargestFileSizeGB - $BackupFreeSpaceGB) GB on $BackupDrive."
+        }
+    }
+}
+
+
+if ($Warnings.Count -gt 0) {
+    Write-Host "`n"
+    $Warnings | ForEach-Object {
+        Write-Warning $_.Message
+        Write-Host "  HOW TO FIX: $($_.Fix)"
+        Write-Host ""
+    }
+    $Choice = Read-Host "Do you want to continue anyway? [Y/N]"
+    if ($Choice.ToUpper() -ne 'Y') {
+        Write-Error "User aborted the script. Please resolve the issues above."
+        exit 1
+    }
+}
+
+Write-Host "✅ Pre-flight checks passed."
+
 New-Item -ItemType Directory -Path $BackupPath -ErrorAction SilentlyContinue | Out-Null
 "Scan started at $(Get-Date)" | Out-File -FilePath $LogFile
 
